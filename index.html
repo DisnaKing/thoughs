@@ -16,6 +16,7 @@
       <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
       <button id="newBtn" class="primary" title="Nueva nota">+</button>
     </div>
+    <div id="tagbar"></div>
     <ul id="list"></ul>
     <button id="syncBtn" class="syncbtn">☁ Sincronización: <span id="syncStatus">desactivada</span></button>
     <div class="foot">
@@ -39,7 +40,8 @@
           <button id="modeBtn">Leer</button>
           <button id="delBtn" class="danger" title="Borrar">🗑</button>
         </div>
-        <textarea id="body" placeholder="Escribe aquí… Usa [[Título]] para enlazar a mano; si nombras otra nota, se enlaza sola."></textarea>
+        <textarea id="body" placeholder="Escribe aquí… [[ para enlazar, # para etiquetar; si nombras otra nota, se enlaza sola."></textarea>
+        <div id="ac" hidden></div>
         <div id="preview" hidden></div>
       </div>
       <aside id="related" hidden></aside>

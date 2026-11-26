@@ -7,6 +7,7 @@ let notes = load();
 let tombs = (() => { try { return JSON.parse(localStorage.getItem(KEY + '.tombs')) || []; } catch { return []; } })();
 let currentId = null;
 let mode = 'edit';
+let activeTag = null; // etiqueta (normalizada) usada como filtro
 let A = { by: {}, edges: [] }; // análisis de relaciones
 
 function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
@@ -18,6 +19,7 @@ const get = id => notes.find(n => n.id === id);
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const TAG_RE = /(?<![\p{L}\p{N}&#\/\[])#([\p{L}][\p{L}\p{N}_-]*)/gu;
 const titleOf = n => n.title.trim() || 'Sin título';
 
 /* ---------- Análisis de relaciones ---------- */
@@ -31,7 +33,10 @@ function tokens(n) {
 }
 
 function analyze() {
-  const by = {}; notes.forEach(n => by[n.id] = { links: new Set(), mentions: new Set(), back: new Set(), related: [] });
+  const by = {}; notes.forEach(n => by[n.id] = { links: new Set(), mentions: new Set(), back: new Set(), related: [], tags: new Set(), sameTag: new Map() });
+  const tagNames = new Map(), tagIds = new Map();
+  notes.forEach(n => { for (const m of n.body.matchAll(TAG_RE)) { const k = norm(m[1]); by[n.id].tags.add(k); if (!tagNames.has(k)) tagNames.set(k, { name: m[1], count: 0 }); if (!tagIds.has(k)) tagIds.set(k, new Set()); tagIds.get(k).add(n.id); } });
+  tagIds.forEach((ids, k) => { tagNames.get(k).count = ids.size; const l = [...ids]; l.forEach(a => l.forEach(b => { if (a !== b) { const m = by[a].sameTag; m.set(b, [...(m.get(b) || []), k]); } })); });
   const byTitle = new Map(); notes.forEach(n => { const k = norm(n.title.trim()); if (k) byTitle.set(k, n.id); });
   const mentionRes = notes.filter(n => norm(n.title.trim()).length >= 3).map(n => ({ id: n.id, re: new RegExp(`(?<![\\p{L}\\p{N}])${reEsc(norm(n.title.trim()))}(?![\\p{L}\\p{N}])`, 'u') }));
 
@@ -66,7 +71,9 @@ function analyze() {
   const edges = [], seen = new Set();
   notes.forEach(n => [...by[n.id].links, ...by[n.id].mentions].forEach(t => { const k = [n.id, t].sort().join('|'); if (!seen.has(k)) { seen.add(k); edges.push({ a: n.id, b: t, kind: 'link' }); } }));
   sims.forEach(([a, b]) => { const k = [a, b].sort().join('|'); if (!seen.has(k)) { seen.add(k); edges.push({ a, b, kind: 'sim' }); } });
-  A = { by, edges, byTitle, mentionRes };
+  notes.forEach(n => by[n.id].sameTag.forEach((_, o) => { const k = [n.id, o].sort().join('|'); if (!seen.has(k)) { seen.add(k); edges.push({ a: n.id, b: o, kind: 'sim' }); } }));
+  if (activeTag && !tagNames.has(activeTag)) activeTag = null;
+  A = { by, edges, byTitle, mentionRes, tagNames };
 }
 
 /* ---------- Markdown mínimo con enlaces automáticos ---------- */
@@ -78,6 +85,7 @@ function render(n) {
     const id = A.byTitle.get(norm(name.trim()));
     return hold(id ? `<a data-id="${id}">${esc(name)}</a>` : `<a class="new" data-new="${esc(name.trim())}" title="Crear nota">${esc(name)}</a>`);
   });
+  t = t.replace(TAG_RE, (_, tag) => hold(`<a class="tag" data-tag="${norm(tag)}">#${esc(tag)}</a>`));
   // menciones automáticas (de las más largas a las más cortas)
   [...A.by[n.id].mentions].map(get).filter(Boolean).sort((a, b) => b.title.length - a.title.length).forEach(m => {
     const re = new RegExp(`(?<![\\p{L}\\p{N}])(${reEsc(m.title.trim())})(?![\\p{L}\\p{N}])`, 'giu');
@@ -94,9 +102,16 @@ function render(n) {
 /* ---------- UI ---------- */
 function setView(v) { document.body.dataset.view = v; }
 
+function renderTagBar() {
+  const tags = [...A.tagNames].sort((a, b) => b[1].count - a[1].count).slice(0, 14);
+  $('#tagbar').innerHTML = tags.map(([k, v]) => `<button class="tagchip ${k === activeTag ? 'on' : ''}" data-tag="${k}">#${esc(v.name)} <small>${v.count}</small></button>`).join('');
+}
+function setTag(k) { activeTag = activeTag === k ? null : k; renderTagBar(); renderList(); }
+
 function renderList() {
+  renderTagBar();
   const q = norm($('#search').value);
-  const items = notes.filter(n => !q || norm(n.title).includes(q) || norm(n.body).includes(q)).sort((a, b) => b.updated - a.updated);
+  const items = notes.filter(n => (!q || norm(n.title).includes(q) || norm(n.body).includes(q)) && (!activeTag || A.by[n.id].tags.has(activeTag))).sort((a, b) => b.updated - a.updated);
   $('#list').innerHTML = items.map(n => `<li data-id="${n.id}" class="${n.id === currentId ? 'active' : ''}"><b>${esc(titleOf(n))}</b><small>${esc(n.body.replace(/\s+/g, ' ').slice(0, 70)) || '—'}</small></li>`).join('') || '<li class="none">Sin notas</li>';
 }
 
@@ -110,6 +125,8 @@ function renderRelated() {
     `<h4>Enlaces</h4>${chips([...r.links])}` +
     `<h4>Menciones detectadas</h4>${chips([...r.mentions])}` +
     `<h4>Enlazada desde</h4>${chips([...r.back])}` +
+    `<h4>Etiquetas</h4>${r.tags.size ? [...r.tags].map(k => `<button class="tagchip" data-tag="${k}">#${esc(A.tagNames.get(k).name)}</button>`).join(' ') : '<div class="none">—</div>'}` +
+    `<h4>Mismas etiquetas</h4>${r.sameTag.size ? [...r.sameTag].map(([id, ks]) => `<button class="chip" data-id="${id}">${esc(titleOf(get(id)))}<small>${esc(ks.map(k => '#' + A.tagNames.get(k).name).join(' '))}</small></button>`).join('') : '<div class="none">—</div>'}` +
     `<h4>Relacionadas por contenido</h4>${r.related.length ? r.related.map(x => `<button class="chip" data-id="${x.id}">${esc(titleOf(get(x.id)))}<small>${esc(x.terms.join(', '))}</small></button>`).join('') : '<div class="none">—</div>'}`;
 }
 
@@ -126,6 +143,7 @@ function renderNote() {
 }
 
 function open(id, view = 'note') {
+  acClose();
   currentId = id; $('#graphView').hidden = true; $('#noteView').hidden = false;
   renderList(); renderNote(); setView(view);
 }
@@ -144,7 +162,51 @@ function changed() {
   n.title = $('#title').value; n.body = $('#body').value; n.updated = Date.now();
   clearTimeout(t); t = setTimeout(() => { persist(); markDirty(n.id); analyze(); renderList(); renderRelated(); }, 350);
 }
-$('#title').oninput = changed; $('#body').oninput = changed;
+$('#title').oninput = changed;
+$('#body').oninput = () => { changed(); acUpdate(); };
+
+/* ---------- Autocompletado: [[títulos]] y #etiquetas ---------- */
+const ac = $('#ac'); let acItems = [], acSel = 0, acCtx = null;
+function acClose() { ac.hidden = true; acItems = []; acCtx = null; }
+function acUpdate() {
+  const ta = $('#body'), pos = ta.selectionStart, before = ta.value.slice(0, pos);
+  let m = before.match(/\[\[([^\]\[\n]*)$/), items = [];
+  if (m) {
+    const raw = m[1].trim(), q = norm(raw);
+    items = notes.filter(n => n.id !== currentId && n.title.trim() && norm(n.title).includes(q))
+      .sort((a, b) => (norm(b.title).startsWith(q) - norm(a.title).startsWith(q)) || a.title.localeCompare(b.title)).slice(0, 6)
+      .map(n => ({ label: n.title, ins: `[[${n.title}]]` }));
+    if (raw && !notes.some(n => norm(n.title.trim()) === q)) items.push({ label: `Crear enlace «${raw}»`, ins: `[[${raw}]]`, hint: true });
+    acCtx = { start: pos - m[0].length, end: pos };
+  } else if ((m = before.match(/(?:^|[\s(])#([\p{L}\p{N}_-]*)$/u))) {
+    const q = norm(m[1]);
+    items = [...A.tagNames].filter(([k]) => k.startsWith(q) && k !== q).sort((a, b) => b[1].count - a[1].count).slice(0, 6)
+      .map(([, v]) => ({ label: '#' + v.name, ins: '#' + v.name + ' ' }));
+    acCtx = { start: pos - m[1].length - 1, end: pos };
+  }
+  acItems = items; acSel = 0;
+  if (!items.length) return acClose();
+  drawAc();
+}
+function drawAc() {
+  ac.hidden = false;
+  ac.innerHTML = acItems.map((it, i) => `<button type="button" class="${i === acSel ? 'on' : ''}${it.hint ? ' hint' : ''}" data-i="${i}">${esc(it.label)}</button>`).join('');
+}
+function acAccept(i) {
+  const it = acItems[i], ta = $('#body'); if (!it || !acCtx) return;
+  ta.setRangeText(it.ins, acCtx.start, acCtx.end, 'end');
+  acClose(); ta.focus(); ta.dispatchEvent(new Event('input'));
+}
+ac.onpointerdown = e => { e.preventDefault(); const b = e.target.closest('[data-i]'); if (b) acAccept(+b.dataset.i); };
+$('#body').addEventListener('keydown', e => {
+  if (ac.hidden) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); acSel = (acSel + (e.key === 'ArrowDown' ? 1 : acItems.length - 1)) % acItems.length; drawAc(); }
+  else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acAccept(acSel); }
+  else if (e.key === 'Escape') { e.preventDefault(); acClose(); }
+});
+let acTimer;
+$('#body').addEventListener('blur', () => { acTimer = setTimeout(acClose, 150); });
+$('#body').addEventListener('focus', () => clearTimeout(acTimer));
 $('#search').oninput = renderList;
 $('#newBtn').onclick = () => create();
 $('#list').onclick = e => { const li = e.target.closest('li[data-id]'); if (li) open(li.dataset.id); };
@@ -154,9 +216,11 @@ $('#delBtn').onclick = () => {
   const n = get(currentId); if (!n || !confirm(`¿Borrar "${titleOf(n)}"?`)) return;
   notes = notes.filter(x => x.id !== n.id); tombs.push({ id: n.id, title: '', body: '', created: n.created, updated: Date.now(), deleted: true }); saveTombs(); markDirty(n.id); currentId = null; persist(); analyze(); renderList(); renderNote(); setView('list');
 };
-$('#related').onclick = e => { const b = e.target.closest('[data-id]'); if (b) open(b.dataset.id); };
+$('#related').onclick = e => { const g = e.target.closest('[data-tag]'); if (g) { setTag(g.dataset.tag); return setView('list'); } const b = e.target.closest('[data-id]'); if (b) open(b.dataset.id); };
+$('#tagbar').onclick = e => { const g = e.target.closest('[data-tag]'); if (g) setTag(g.dataset.tag); };
 $('#preview').onclick = e => {
   const a = e.target.closest('a'); if (!a) return;
+  if (a.dataset.tag) { setTag(a.dataset.tag); return setView('list'); }
   if (a.dataset.id) open(a.dataset.id); else if (a.dataset.new) create(a.dataset.new);
 };
 $('#exportBtn').onclick = () => {

@@ -63,3 +63,15 @@ dialog::backdrop{background:#0008}
 dialog input{width:100%;margin:4px 0 8px}
 dialog button{margin:2px 4px 2px 0}
 dialog p{font-size:14px}
+
+#tagbar{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px}
+#tagbar:empty{display:none}
+.tagchip{padding:2px 9px;font-size:13px;border-radius:999px;background:var(--accent-soft);color:var(--accent);border-color:transparent}
+.tagchip small{opacity:.7}
+.tagchip.on{background:var(--accent);color:#fff}
+#preview a.tag{border:0;background:var(--accent-soft);padding:0 7px;border-radius:999px;font-size:.9em}
+#editor{position:relative}
+#ac{position:absolute;left:16px;right:16px;bottom:16px;z-index:5;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px #0004;display:flex;flex-direction:column;overflow:hidden}
+#ac button{border:0;border-radius:0;text-align:left;background:transparent;padding:10px 12px}
+#ac button.on{background:var(--accent-soft)}
+#ac button.hint{color:var(--muted);font-style:italic}
