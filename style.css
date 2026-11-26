@@ -28,7 +28,7 @@ button.danger{color:var(--accent-text);border-color:var(--accent)}
 input,textarea{background:var(--chip);border:1.5px solid var(--purple-2);border-radius:12px;padding:8px 12px;outline:none}
 input::placeholder,textarea::placeholder{color:var(--muted);opacity:.7}
 input:focus,textarea:focus{border-color:var(--accent)}
-#app{display:grid;grid-template-columns:300px 1fr;height:100dvh}
+#app{position:fixed;inset:0;display:grid;grid-template-columns:300px 1fr;grid-template-rows:minmax(0,1fr)}
 #sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .bar{display:flex;gap:8px;padding:12px;padding-top:max(12px,env(safe-area-inset-top))}
 .bar input{flex:1;min-width:0}
@@ -87,12 +87,15 @@ dialog p{font-size:14px}
 #ac button.on{background:var(--accent);color:#fff}
 #ac button.hint{color:var(--muted);font-style:italic}
 @media (max-width:800px){
-  #app{grid-template-columns:1fr}
+  #app{grid-template-columns:minmax(0,1fr)}
   body[data-view=list] #main{display:none}
   body:not([data-view=list]) #sidebar{display:none}
   .mobilebar{display:block}
-  #noteView{grid-template-columns:1fr;overflow:auto;display:block}
-  #editor{min-height:70dvh}
+  #noteView{grid-template-columns:1fr;overflow:auto;display:block;-webkit-overflow-scrolling:touch}
+  #editor{min-height:0}
+  #body{flex:none;height:55vh}
+  #preview{min-height:40vh}
+  #related{padding-bottom:max(14px,env(safe-area-inset-bottom))}
   #related{border-left:0;border-top:1px solid var(--line)}
   #title{font-size:22px}
 }
