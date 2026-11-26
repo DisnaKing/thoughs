@@ -243,7 +243,7 @@ function startGraph() {
     }
     for (const e of edges) { const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) || 1, f = (d - 110) * 0.01; e.a.vx += dx / d * f; e.a.vy += dy / d * f; e.b.vx -= dx / d * f; e.b.vy -= dy / d * f; }
     for (const n of nodes) { if (n === drag) continue; n.vx *= 0.85; n.vy *= 0.85; n.x += n.vx; n.y += n.vy; }
-    ctx.clearRect(0, 0, W, H); ctx.font = '13px system-ui'; ctx.textAlign = 'center';
+    ctx.clearRect(0, 0, W, H); ctx.font = '13px Inter, system-ui'; ctx.textAlign = 'center';
     for (const e of edges) { ctx.beginPath(); ctx.setLineDash(e.kind === 'sim' ? [5, 4] : []); ctx.strokeStyle = e.kind === 'sim' ? col('--muted') : col('--accent'); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke(); }
     ctx.setLineDash([]);
     for (const n of nodes) {
