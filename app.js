@@ -4,12 +4,15 @@ const KEY = 'thoughs.notes.v1';
 
 /* ---------- Estado ---------- */
 let notes = load();
+let tombs = (() => { try { return JSON.parse(localStorage.getItem(KEY + '.tombs')) || []; } catch { return []; } })();
 let currentId = null;
 let mode = 'edit';
 let A = { by: {}, edges: [] }; // análisis de relaciones
 
 function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
 function persist() { localStorage.setItem(KEY, JSON.stringify(notes)); }
+function saveTombs() { localStorage.setItem(KEY + '.tombs', JSON.stringify(tombs)); }
+function markDirty(id) { if (typeof Sync !== 'undefined') Sync.dirty(id); }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const get = id => notes.find(n => n.id === id);
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -129,7 +132,7 @@ function open(id, view = 'note') {
 
 function create(title = '') {
   const n = { id: uid(), title, body: '', created: Date.now(), updated: Date.now() };
-  notes.push(n); persist(); analyze(); mode = 'edit'; open(n.id);
+  notes.push(n); persist(); markDirty(n.id); analyze(); mode = 'edit'; open(n.id);
   (title ? $('#body') : $('#title')).focus();
   return n;
 }
@@ -139,7 +142,7 @@ let t;
 function changed() {
   const n = get(currentId); if (!n) return;
   n.title = $('#title').value; n.body = $('#body').value; n.updated = Date.now();
-  clearTimeout(t); t = setTimeout(() => { persist(); analyze(); renderList(); renderRelated(); }, 350);
+  clearTimeout(t); t = setTimeout(() => { persist(); markDirty(n.id); analyze(); renderList(); renderRelated(); }, 350);
 }
 $('#title').oninput = changed; $('#body').oninput = changed;
 $('#search').oninput = renderList;
@@ -149,7 +152,7 @@ $('#backBtn').onclick = () => setView('list');
 $('#modeBtn').onclick = () => { mode = mode === 'edit' ? 'read' : 'edit'; renderNote(); };
 $('#delBtn').onclick = () => {
   const n = get(currentId); if (!n || !confirm(`¿Borrar "${titleOf(n)}"?`)) return;
-  notes = notes.filter(x => x.id !== n.id); currentId = null; persist(); analyze(); renderList(); renderNote(); setView('list');
+  notes = notes.filter(x => x.id !== n.id); tombs.push({ id: n.id, title: '', body: '', created: n.created, updated: Date.now(), deleted: true }); saveTombs(); markDirty(n.id); currentId = null; persist(); analyze(); renderList(); renderNote(); setView('list');
 };
 $('#related').onclick = e => { const b = e.target.closest('[data-id]'); if (b) open(b.dataset.id); };
 $('#preview').onclick = e => {
@@ -165,7 +168,7 @@ $('#importBtn').onclick = () => $('#importFile').click();
 $('#importFile').onchange = async e => {
   try {
     const data = JSON.parse(await e.target.files[0].text()); let add = 0;
-    data.forEach(n => { const cur = get(n.id); if (!cur) { notes.push(n); add++; } else if (n.updated > cur.updated) Object.assign(cur, n); });
+    data.forEach(n => { const cur = get(n.id); if (!cur) { notes.push(n); add++; markDirty(n.id); } else if (n.updated > cur.updated) { Object.assign(cur, n); markDirty(n.id); } });
     persist(); analyze(); renderList(); renderNote(); alert(`Importadas ${add} notas nuevas.`);
   } catch { alert('Archivo no válido'); }
   e.target.value = '';

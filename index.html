@@ -17,6 +17,7 @@
       <button id="newBtn" class="primary" title="Nueva nota">+</button>
     </div>
     <ul id="list"></ul>
+    <button id="syncBtn" class="syncbtn">☁ Sincronización: <span id="syncStatus">desactivada</span></button>
     <div class="foot">
       <button id="graphBtn">Grafo</button>
       <button id="exportBtn">Exportar</button>
@@ -50,6 +51,8 @@
     </section>
   </main>
 </div>
+<dialog id="syncDlg"><form method="dialog" id="syncForm"><div id="syncBody"></div><p id="syncMsg" class="none"></p><button value="close">Cerrar</button></form></dialog>
 <script src="app.js"></script>
+<script src="sync.js"></script>
 </body>
 </html>

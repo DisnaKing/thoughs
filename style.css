@@ -56,3 +56,10 @@ input:focus,textarea:focus{border-color:var(--accent)}
   #related{border-left:0;border-top:1px solid var(--line)}
 }
 [hidden]{display:none!important}
+
+.syncbtn{margin:0 12px 8px;text-align:left;font-size:13px;color:var(--muted)}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;max-width:420px;width:calc(100% - 32px)}
+dialog::backdrop{background:#0008}
+dialog input{width:100%;margin:4px 0 8px}
+dialog button{margin:2px 4px 2px 0}
+dialog p{font-size:14px}
