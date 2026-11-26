@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Thoughs</title>
+<meta name="theme-color" content="#4f46e5">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-view="list">
+<div id="app">
+  <aside id="sidebar">
+    <div class="bar">
+      <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
+      <button id="newBtn" class="primary" title="Nueva nota">+</button>
+    </div>
+    <ul id="list"></ul>
+    <div class="foot">
+      <button id="graphBtn">Grafo</button>
+      <button id="exportBtn">Exportar</button>
+      <button id="importBtn">Importar</button>
+      <input id="importFile" type="file" accept="application/json" hidden>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header class="mobilebar">
+      <button id="backBtn">‹ Notas</button>
+    </header>
+
+    <section id="noteView">
+      <div id="empty" class="empty">Crea una nota o concepto con <b>+</b>.<br>Escribe con normalidad: las relaciones aparecen solas.</div>
+      <div id="editor" hidden>
+        <div class="titlebar">
+          <input id="title" placeholder="Título / concepto" autocomplete="off">
+          <button id="modeBtn">Leer</button>
+          <button id="delBtn" class="danger" title="Borrar">🗑</button>
+        </div>
+        <textarea id="body" placeholder="Escribe aquí… Usa [[Título]] para enlazar a mano; si nombras otra nota, se enlaza sola."></textarea>
+        <div id="preview" hidden></div>
+      </div>
+      <aside id="related" hidden></aside>
+    </section>
+
+    <section id="graphView" hidden>
+      <canvas id="graph"></canvas>
+      <div class="legend"><span class="l1"></span> enlace/mención <span class="l2"></span> similitud de contenido</div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

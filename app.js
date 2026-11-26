@@ -1,0 +1,219 @@
+'use strict';
+const $ = s => document.querySelector(s);
+const KEY = 'thoughs.notes.v1';
+
+/* ---------- Estado ---------- */
+let notes = load();
+let currentId = null;
+let mode = 'edit';
+let A = { by: {}, edges: [] }; // análisis de relaciones
+
+function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; } }
+function persist() { localStorage.setItem(KEY, JSON.stringify(notes)); }
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const get = id => notes.find(n => n.id === id);
+const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const titleOf = n => n.title.trim() || 'Sin título';
+
+/* ---------- Análisis de relaciones ---------- */
+const STOP = new Set(('para como pero esto esta este estos estas esas esosesa eso cuando donde entre sobre desde hasta porque tambien segun cada todo toda todos todas otro otra otros otras mismo misma muy mas menos sido ser estar tiene tienen hacer hace puede pueden cual cuales quien algo ' +
+  'with that this from have there their they what when which will would your about into than then them these those been being were also more some such only other over just like').split(' '));
+
+function stem(w) { return w.length > 5 && w.endsWith('es') ? w.slice(0, -2) : w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w; }
+function tokens(n) {
+  const t = norm((n.title + ' ').repeat(3) + n.body).match(/[\p{L}\p{N}]{4,}/gu) || [];
+  return t.filter(w => !STOP.has(w)).map(stem);
+}
+
+function analyze() {
+  const by = {}; notes.forEach(n => by[n.id] = { links: new Set(), mentions: new Set(), back: new Set(), related: [] });
+  const byTitle = new Map(); notes.forEach(n => { const k = norm(n.title.trim()); if (k) byTitle.set(k, n.id); });
+  const mentionRes = notes.filter(n => norm(n.title.trim()).length >= 3).map(n => ({ id: n.id, re: new RegExp(`(?<![\\p{L}\\p{N}])${reEsc(norm(n.title.trim()))}(?![\\p{L}\\p{N}])`, 'u') }));
+
+  notes.forEach(n => {
+    const nb = norm(n.body);
+    for (const m of n.body.matchAll(/\[\[([^\]]+)\]\]/g)) { const id = byTitle.get(norm(m[1].trim())); if (id && id !== n.id) by[n.id].links.add(id); }
+    mentionRes.forEach(({ id, re }) => { if (id !== n.id && !by[n.id].links.has(id) && re.test(nb)) by[n.id].mentions.add(id); });
+  });
+  notes.forEach(n => [...by[n.id].links, ...by[n.id].mentions].forEach(t => by[t].back.add(n.id)));
+
+  // Similitud por contenido (TF-IDF + coseno)
+  const docs = notes.map(n => { const tf = new Map(); tokens(n).forEach(w => tf.set(w, (tf.get(w) || 0) + 1)); return tf; });
+  const df = new Map(); docs.forEach(tf => tf.forEach((_, w) => df.set(w, (df.get(w) || 0) + 1)));
+  const vecs = docs.map(tf => {
+    const v = new Map(); let s = 0;
+    tf.forEach((c, w) => { const x = (1 + Math.log(c)) * (Math.log((notes.length + 1) / (df.get(w) + 1)) + 1); v.set(w, x); s += x * x; });
+    s = Math.sqrt(s) || 1; v.forEach((x, w) => v.set(w, x / s)); return v;
+  });
+  const sims = [];
+  for (let i = 0; i < notes.length; i++) for (let j = i + 1; j < notes.length; j++) {
+    let dot = 0; const shared = [];
+    vecs[i].forEach((x, w) => { const y = vecs[j].get(w); if (y) { dot += x * y; shared.push([w, x * y]); } });
+    if (dot >= 0.12 && shared.length >= 2) {
+      const terms = shared.sort((a, b) => b[1] - a[1]).slice(0, 4).map(s => s[0]);
+      by[notes[i].id].related.push({ id: notes[j].id, score: dot, terms });
+      by[notes[j].id].related.push({ id: notes[i].id, score: dot, terms });
+      sims.push([notes[i].id, notes[j].id, dot]);
+    }
+  }
+  Object.values(by).forEach(r => r.related.sort((a, b) => b.score - a.score).splice(6));
+
+  const edges = [], seen = new Set();
+  notes.forEach(n => [...by[n.id].links, ...by[n.id].mentions].forEach(t => { const k = [n.id, t].sort().join('|'); if (!seen.has(k)) { seen.add(k); edges.push({ a: n.id, b: t, kind: 'link' }); } }));
+  sims.forEach(([a, b]) => { const k = [a, b].sort().join('|'); if (!seen.has(k)) { seen.add(k); edges.push({ a, b, kind: 'sim' }); } });
+  A = { by, edges, byTitle, mentionRes };
+}
+
+/* ---------- Markdown mínimo con enlaces automáticos ---------- */
+function render(n) {
+  const slots = [];
+  const hold = h => { slots.push(h); return `\u0000${slots.length - 1}\u0000`; };
+  let t = n.body;
+  t = t.replace(/\[\[([^\]]+)\]\]/g, (_, name) => {
+    const id = A.byTitle.get(norm(name.trim()));
+    return hold(id ? `<a data-id="${id}">${esc(name)}</a>` : `<a class="new" data-new="${esc(name.trim())}" title="Crear nota">${esc(name)}</a>`);
+  });
+  // menciones automáticas (de las más largas a las más cortas)
+  [...A.by[n.id].mentions].map(get).filter(Boolean).sort((a, b) => b.title.length - a.title.length).forEach(m => {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])(${reEsc(m.title.trim())})(?![\\p{L}\\p{N}])`, 'giu');
+    t = t.replace(re, x => hold(`<a class="auto" data-id="${m.id}">${esc(x)}</a>`));
+  });
+  t = esc(t.replace(/\u0000/g, '\u0001')).replace(/\u0001/g, '\u0000');
+  t = t.replace(/^### (.*)$/gm, '<h3>$1</h3>').replace(/^## (.*)$/gm, '<h2>$1</h2>').replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*]+)\*/g, '<i>$1</i>')
+    .replace(/^(?:[-*] .*(?:\n|$))+/gm, b => '<ul>' + b.trim().split('\n').map(l => `<li>${l.slice(2)}</li>`).join('') + '</ul>')
+    .replace(/(?<!>)\n/g, '<br>');
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => slots[i]);
+}
+
+/* ---------- UI ---------- */
+function setView(v) { document.body.dataset.view = v; }
+
+function renderList() {
+  const q = norm($('#search').value);
+  const items = notes.filter(n => !q || norm(n.title).includes(q) || norm(n.body).includes(q)).sort((a, b) => b.updated - a.updated);
+  $('#list').innerHTML = items.map(n => `<li data-id="${n.id}" class="${n.id === currentId ? 'active' : ''}"><b>${esc(titleOf(n))}</b><small>${esc(n.body.replace(/\s+/g, ' ').slice(0, 70)) || '—'}</small></li>`).join('') || '<li class="none">Sin notas</li>';
+}
+
+function renderRelated() {
+  const n = get(currentId), box = $('#related');
+  if (!n) { box.hidden = true; return; }
+  box.hidden = false;
+  const r = A.by[n.id];
+  const chips = (ids, sub) => ids.length ? ids.map(id => `<button class="chip" data-id="${id}">${esc(titleOf(get(id)))}${sub ? `<small>${esc(sub(id))}</small>` : ''}</button>`).join('') : '<div class="none">—</div>';
+  box.innerHTML =
+    `<h4>Enlaces</h4>${chips([...r.links])}` +
+    `<h4>Menciones detectadas</h4>${chips([...r.mentions])}` +
+    `<h4>Enlazada desde</h4>${chips([...r.back])}` +
+    `<h4>Relacionadas por contenido</h4>${r.related.length ? r.related.map(x => `<button class="chip" data-id="${x.id}">${esc(titleOf(get(x.id)))}<small>${esc(x.terms.join(', '))}</small></button>`).join('') : '<div class="none">—</div>'}`;
+}
+
+function renderNote() {
+  const n = get(currentId);
+  $('#empty').hidden = !!n; $('#editor').hidden = !n;
+  if (!n) { $('#related').hidden = true; return; }
+  if (document.activeElement !== $('#title')) $('#title').value = n.title;
+  if (document.activeElement !== $('#body')) $('#body').value = n.body;
+  $('#body').hidden = mode !== 'edit'; $('#preview').hidden = mode === 'edit';
+  $('#modeBtn').textContent = mode === 'edit' ? 'Leer' : 'Editar';
+  if (mode === 'read') $('#preview').innerHTML = render(n) || '<span class="none">Nota vacía</span>';
+  renderRelated();
+}
+
+function open(id, view = 'note') {
+  currentId = id; $('#graphView').hidden = true; $('#noteView').hidden = false;
+  renderList(); renderNote(); setView(view);
+}
+
+function create(title = '') {
+  const n = { id: uid(), title, body: '', created: Date.now(), updated: Date.now() };
+  notes.push(n); persist(); analyze(); mode = 'edit'; open(n.id);
+  (title ? $('#body') : $('#title')).focus();
+  return n;
+}
+
+/* ---------- Eventos ---------- */
+let t;
+function changed() {
+  const n = get(currentId); if (!n) return;
+  n.title = $('#title').value; n.body = $('#body').value; n.updated = Date.now();
+  clearTimeout(t); t = setTimeout(() => { persist(); analyze(); renderList(); renderRelated(); }, 350);
+}
+$('#title').oninput = changed; $('#body').oninput = changed;
+$('#search').oninput = renderList;
+$('#newBtn').onclick = () => create();
+$('#list').onclick = e => { const li = e.target.closest('li[data-id]'); if (li) open(li.dataset.id); };
+$('#backBtn').onclick = () => setView('list');
+$('#modeBtn').onclick = () => { mode = mode === 'edit' ? 'read' : 'edit'; renderNote(); };
+$('#delBtn').onclick = () => {
+  const n = get(currentId); if (!n || !confirm(`¿Borrar "${titleOf(n)}"?`)) return;
+  notes = notes.filter(x => x.id !== n.id); currentId = null; persist(); analyze(); renderList(); renderNote(); setView('list');
+};
+$('#related').onclick = e => { const b = e.target.closest('[data-id]'); if (b) open(b.dataset.id); };
+$('#preview').onclick = e => {
+  const a = e.target.closest('a'); if (!a) return;
+  if (a.dataset.id) open(a.dataset.id); else if (a.dataset.new) create(a.dataset.new);
+};
+$('#exportBtn').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(notes, null, 2)], { type: 'application/json' }));
+  a.download = `thoughs-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+};
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  try {
+    const data = JSON.parse(await e.target.files[0].text()); let add = 0;
+    data.forEach(n => { const cur = get(n.id); if (!cur) { notes.push(n); add++; } else if (n.updated > cur.updated) Object.assign(cur, n); });
+    persist(); analyze(); renderList(); renderNote(); alert(`Importadas ${add} notas nuevas.`);
+  } catch { alert('Archivo no válido'); }
+  e.target.value = '';
+};
+
+/* ---------- Grafo ---------- */
+let sim = null;
+$('#graphBtn').onclick = () => { $('#noteView').hidden = true; $('#graphView').hidden = false; setView('graph'); startGraph(); };
+$('#backBtn').addEventListener('click', () => { if (sim) sim.stop = true; });
+
+function startGraph() {
+  const cv = $('#graph'), ctx = cv.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr);
+  const nodes = notes.map((n, i) => ({ id: n.id, x: W / 2 + Math.cos(i) * 120, y: H / 2 + Math.sin(i) * 120, vx: 0, vy: 0 }));
+  const idx = new Map(nodes.map(n => [n.id, n]));
+  const edges = A.edges.map(e => ({ a: idx.get(e.a), b: idx.get(e.b), kind: e.kind }));
+  const deg = {}; edges.forEach(e => { deg[e.a.id] = (deg[e.a.id] || 0) + 1; deg[e.b.id] = (deg[e.b.id] || 0) + 1; });
+  const css = getComputedStyle(document.body), col = n => css.getPropertyValue(n).trim();
+  let drag = null, moved = false;
+  if (sim) sim.stop = true; const me = sim = { stop: false };
+
+  const step = () => {
+    if (me.stop) return;
+    for (const a of nodes) {
+      a.vx += (W / 2 - a.x) * 0.002; a.vy += (H / 2 - a.y) * 0.002;
+      for (const b of nodes) if (a !== b) { let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy + 0.1; const f = 1800 / d2; a.vx += dx * f / Math.sqrt(d2); a.vy += dy * f / Math.sqrt(d2); }
+    }
+    for (const e of edges) { const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) || 1, f = (d - 110) * 0.01; e.a.vx += dx / d * f; e.a.vy += dy / d * f; e.b.vx -= dx / d * f; e.b.vy -= dy / d * f; }
+    for (const n of nodes) { if (n === drag) continue; n.vx *= 0.85; n.vy *= 0.85; n.x += n.vx; n.y += n.vy; }
+    ctx.clearRect(0, 0, W, H); ctx.font = '13px system-ui'; ctx.textAlign = 'center';
+    for (const e of edges) { ctx.beginPath(); ctx.setLineDash(e.kind === 'sim' ? [5, 4] : []); ctx.strokeStyle = e.kind === 'sim' ? col('--muted') : col('--accent'); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke(); }
+    ctx.setLineDash([]);
+    for (const n of nodes) {
+      const r = 6 + Math.min(10, (deg[n.id] || 0) * 2);
+      ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 7); ctx.fillStyle = n.id === currentId ? col('--accent') : col('--panel'); ctx.fill(); ctx.strokeStyle = col('--accent'); ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = col('--text'); ctx.fillText(titleOf(get(n.id)).slice(0, 24), n.x, n.y + r + 14);
+    }
+    requestAnimationFrame(step);
+  };
+  const hit = e => { const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; return nodes.find(n => Math.hypot(n.x - x, n.y - y) < 18); };
+  cv.onpointerdown = e => { drag = hit(e) || null; moved = false; if (drag) cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove = e => { if (!drag) return; const r = cv.getBoundingClientRect(); drag.x = e.clientX - r.left; drag.y = e.clientY - r.top; moved = true; };
+  cv.onpointerup = () => { if (drag && !moved) { me.stop = true; open(drag.id); } drag = null; };
+  if (!nodes.length) { ctx.fillStyle = col('--muted'); ctx.textAlign = 'center'; ctx.fillText('Aún no hay notas', W / 2, H / 2); return; }
+  step();
+}
+
+/* ---------- Inicio ---------- */
+analyze(); renderList(); renderNote();
+if (!notes.length) setView('list');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
