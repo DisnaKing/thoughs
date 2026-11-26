@@ -23,15 +23,6 @@ const TAG_RE = /(?<![\p{L}\p{N}&#\/\[])#([\p{L}][\p{L}\p{N}_-]*)/gu;
 const titleOf = n => n.title.trim() || 'Sin título';
 
 /* ---------- Análisis de relaciones ---------- */
-const STOP = new Set(('para como pero esto esta este estos estas esas esosesa eso cuando donde entre sobre desde hasta porque tambien segun cada todo toda todos todas otro otra otros otras mismo misma muy mas menos sido ser estar tiene tienen hacer hace puede pueden cual cuales quien algo ' +
-  'with that this from have there their they what when which will would your about into than then them these those been being were also more some such only other over just like').split(' '));
-
-function stem(w) { return w.length > 5 && w.endsWith('es') ? w.slice(0, -2) : w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w; }
-function tokens(n) {
-  const t = norm((n.title + ' ').repeat(3) + n.body).match(/[\p{L}\p{N}]{4,}/gu) || [];
-  return t.filter(w => !STOP.has(w)).map(stem);
-}
-
 function analyze() {
   const by = {}; notes.forEach(n => by[n.id] = { links: new Set(), mentions: new Set(), back: new Set(), related: [], tags: new Set(), sameTag: new Map() });
   const tagNames = new Map(), tagIds = new Map();
@@ -47,25 +38,15 @@ function analyze() {
   });
   notes.forEach(n => [...by[n.id].links, ...by[n.id].mentions].forEach(t => by[t].back.add(n.id)));
 
-  // Similitud por contenido (TF-IDF + coseno)
-  const docs = notes.map(n => { const tf = new Map(); tokens(n).forEach(w => tf.set(w, (tf.get(w) || 0) + 1)); return tf; });
-  const df = new Map(); docs.forEach(tf => tf.forEach((_, w) => df.set(w, (df.get(w) || 0) + 1)));
-  const vecs = docs.map(tf => {
-    const v = new Map(); let s = 0;
-    tf.forEach((c, w) => { const x = (1 + Math.log(c)) * (Math.log((notes.length + 1) / (df.get(w) + 1)) + 1); v.set(w, x); s += x * x; });
-    s = Math.sqrt(s) || 1; v.forEach((x, w) => v.set(w, x / s)); return v;
-  });
+  // Similitud: texto (BM25 sobre raíces + bigramas) + vecinos en común (enlaces, menciones, etiquetas)
+  const nbrs = new Map(notes.map(n => [n.id, new Set([...by[n.id].links, ...by[n.id].mentions, ...by[n.id].back, ...[...by[n.id].tags].map(k => 'tag:' + k)])]));
+  const label = k => k.startsWith('tag:') ? '#' + (tagNames.get(k.slice(4)) || { name: k.slice(4) }).name : titleOf(get(k));
+  const simMap = Similarity.compute(notes, nbrs, label);
   const sims = [];
-  for (let i = 0; i < notes.length; i++) for (let j = i + 1; j < notes.length; j++) {
-    let dot = 0; const shared = [];
-    vecs[i].forEach((x, w) => { const y = vecs[j].get(w); if (y) { dot += x * y; shared.push([w, x * y]); } });
-    if (dot >= 0.12 && shared.length >= 2) {
-      const terms = shared.sort((a, b) => b[1] - a[1]).slice(0, 4).map(s => s[0]);
-      by[notes[i].id].related.push({ id: notes[j].id, score: dot, terms });
-      by[notes[j].id].related.push({ id: notes[i].id, score: dot, terms });
-      sims.push([notes[i].id, notes[j].id, dot]);
-    }
-  }
+  notes.forEach(n => {
+    const direct = new Set([...by[n.id].links, ...by[n.id].mentions, ...by[n.id].back]);
+    simMap.get(n.id).forEach(r => { if (n.id < r.id) sims.push([n.id, r.id, r.score]); if (!direct.has(r.id)) by[n.id].related.push(r); });
+  });
   Object.values(by).forEach(r => r.related.sort((a, b) => b.score - a.score).splice(6));
 
   const edges = [], seen = new Set();
@@ -127,7 +108,7 @@ function renderRelated() {
     `<h4>Enlazada desde</h4>${chips([...r.back])}` +
     `<h4>Etiquetas</h4>${r.tags.size ? [...r.tags].map(k => `<button class="tagchip" data-tag="${k}">#${esc(A.tagNames.get(k).name)}</button>`).join(' ') : '<div class="none">—</div>'}` +
     `<h4>Mismas etiquetas</h4>${r.sameTag.size ? [...r.sameTag].map(([id, ks]) => `<button class="chip" data-id="${id}">${esc(titleOf(get(id)))}<small>${esc(ks.map(k => '#' + A.tagNames.get(k).name).join(' '))}</small></button>`).join('') : '<div class="none">—</div>'}` +
-    `<h4>Relacionadas por contenido</h4>${r.related.length ? r.related.map(x => `<button class="chip" data-id="${x.id}">${esc(titleOf(get(x.id)))}<small>${esc(x.terms.join(', '))}</small></button>`).join('') : '<div class="none">—</div>'}`;
+    `<h4>Relacionadas por contenido</h4>${r.related.length ? r.related.map(x => `<button class="chip" data-id="${x.id}">${esc(titleOf(get(x.id)))}<small>${esc([...x.terms.slice(0, 3), ...(x.via.length ? ['vía ' + x.via.slice(0, 2).join(', ')] : [])].join(' · '))}</small></button>`).join('') : '<div class="none">—</div>'}`;
 }
 
 function renderNote() {
